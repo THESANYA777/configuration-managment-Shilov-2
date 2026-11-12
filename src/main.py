@@ -7,6 +7,8 @@ from urllib.request import Request, urlopen
 from urllib.error import HTTPError, URLError
 import json
 import re
+import subprocess
+from pathlib import Path
 
 
 def validate_package_name(value: str) -> str:
@@ -554,6 +556,133 @@ def print_reverse_dependencies(package, graph):
     print(f"Всего обратных зависимостей: {len(reverse_dependencies)}")
 
 
+def escape_graphviz_name(name):
+    """
+    Экранирует имя пакета для использования в Graphviz DOT.
+    """
+    return '"' + name.replace('"', '\\"') + '"'
+
+
+def build_graphviz_dot(graph, package):
+    """
+    Формирует текстовое описание графа в формате Graphviz DOT.
+    """
+
+    lines = [
+        "digraph Dependencies {",
+        "    rankdir=LR;",
+        '    node [shape=box, style="rounded"];',
+        ""
+    ]
+
+    # Добавляем все вершины и связи.
+    added_nodes = set()
+
+    for source, dependencies in graph.items():
+        if source not in added_nodes:
+            lines.append(
+                f"    {escape_graphviz_name(source)};"
+            )
+            added_nodes.add(source)
+
+        for dependency in dependencies:
+            if dependency not in added_nodes:
+                lines.append(
+                    f"    {escape_graphviz_name(dependency)};"
+                )
+                added_nodes.add(dependency)
+
+            lines.append(
+                f"    {escape_graphviz_name(source)} -> "
+                f"{escape_graphviz_name(dependency)};"
+            )
+
+    lines.append("}")
+
+    return "\n".join(lines)
+
+
+def save_graphviz_dot(graph, package, output_dot):
+    """
+    Сохраняет граф в файл формата DOT.
+    """
+    dot_text = build_graphviz_dot(graph, package)
+
+    output_path = Path(output_dot)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+
+    output_path.write_text(
+        dot_text,
+        encoding="utf-8"
+    )
+
+    return output_path
+
+
+def generate_png_from_dot(dot_file, output_png):
+    """
+    Запускает Graphviz dot и создаёт PNG-файл.
+    """
+
+    dot_file = Path(dot_file)
+    output_png = Path(output_png)
+
+    output_png.parent.mkdir(parents=True, exist_ok=True)
+
+    try:
+        subprocess.run(
+            [
+                "dot",
+                "-Tpng",
+                str(dot_file),
+                "-o",
+                str(output_png)
+            ],
+            check=True,
+            capture_output=True,
+            text=True
+        )
+
+    except FileNotFoundError:
+        raise RuntimeError(
+            "Graphviz не найден. Установите Graphviz "
+            "и добавьте программу 'dot' в PATH."
+        )
+
+    except subprocess.CalledProcessError as error:
+        raise RuntimeError(
+            "Ошибка Graphviz:\n" + error.stderr
+        )
+
+    return output_png
+
+
+def visualize_dependency_graph(graph, package, output_png):
+    """
+    Формирует DOT и PNG для графа зависимостей.
+    """
+
+    output_png = Path(output_png)
+
+    output_dot = output_png.with_suffix(".dot")
+
+    save_graphviz_dot(
+        graph,
+        package,
+        output_dot
+    )
+
+    generate_png_from_dot(
+        output_dot,
+        output_png
+    )
+
+    print()
+    print("Визуализация графа:")
+    print(f"  DOT: {output_dot}")
+    print(f"  PNG: {output_png}")
+
+
 
 
 
@@ -598,6 +727,12 @@ def main() -> int:
                     print("Циклические зависимости не обнаружены.")
 
                 print_reverse_dependencies(args.package, repository_graph)
+
+                visualize_dependency_graph(
+                    repository_graph,
+                    args.package,
+                    args.output
+                )
 
             else:
                 # Сохраняем возможность проверки этапа 2
