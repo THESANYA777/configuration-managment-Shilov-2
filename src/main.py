@@ -469,6 +469,90 @@ def find_cycles(graph: dict) -> list:
 
     return cycles
 
+def build_reverse_graph(graph):
+    """
+    Строит граф обратных зависимостей.
+
+    Если:
+        A -> B
+        C -> B
+
+    то:
+        B -> [A, C]
+    """
+    reverse_graph = {package: [] for package in graph}
+
+    for package, dependencies in graph.items():
+        for dependency in dependencies:
+            if dependency not in reverse_graph:
+                reverse_graph[dependency] = []
+
+            reverse_graph[dependency].append(package)
+
+    return reverse_graph
+
+
+def find_reverse_dependencies_bfs_recursive(package, graph):
+    """
+    Находит все пакеты, которые прямо или косвенно
+    зависят от указанного пакета.
+
+    Используется рекурсивный BFS, реализованный
+    на предыдущем этапе.
+    """
+    reverse_graph = build_reverse_graph(graph)
+
+    if package not in reverse_graph:
+        raise ValueError(f"Пакет '{package}' отсутствует в графе.")
+
+    result = []
+    visited = set()
+
+    def bfs_recursive(queue):
+        if not queue:
+            return
+
+        current = queue.pop(0)
+
+        if current in visited:
+            bfs_recursive(queue)
+            return
+
+        visited.add(current)
+
+        for dependent in reverse_graph.get(current, []):
+            if dependent not in visited:
+                result.append(dependent)
+                queue.append(dependent)
+
+        bfs_recursive(queue)
+
+    bfs_recursive([package])
+
+    return result
+
+
+def print_reverse_dependencies(package, graph):
+    """
+    Выводит обратные зависимости указанного пакета.
+    """
+    reverse_dependencies = find_reverse_dependencies_bfs_recursive(
+        package,
+        graph
+    )
+
+    print()
+    print(f"Обратные зависимости пакета '{package}':")
+
+    if not reverse_dependencies:
+        print("  Нет пакетов, зависящих от данного пакета.")
+        return
+
+    for dependency in reverse_dependencies:
+        print(f"  {dependency}")
+
+    print(f"Всего обратных зависимостей: {len(reverse_dependencies)}")
+
 
 
 
@@ -512,6 +596,8 @@ def main() -> int:
                         print("Цикл: " + " -> ".join(cycle))
                 else:
                     print("Циклические зависимости не обнаружены.")
+
+                print_reverse_dependencies(args.package, repository_graph)
 
             else:
                 # Сохраняем возможность проверки этапа 2
