@@ -5,6 +5,8 @@ import tomli
 from urllib.parse import urlparse
 from urllib.request import Request, urlopen
 from urllib.error import HTTPError, URLError
+import json
+import re
 
 
 def validate_package_name(value: str) -> str:
@@ -293,38 +295,268 @@ def extract_dependencies(cargo_data: dict) -> list[str]:
 
     return sorted(dependencies)
 
+def load_test_graph(file_path: str) -> dict:
+    """Загружает тестовый граф из JSON."""
+
+    if not os.path.isfile(file_path):
+        raise FileNotFoundError(
+            f"Файл тестового графа не найден: {file_path}"
+        )
+
+    try:
+        with open(file_path, "r", encoding="utf-8") as file:
+            graph = json.load(file)
+
+    except json.JSONDecodeError as error:
+        raise ValueError(
+            f"Ошибка чтения JSON: {error}"
+        ) from error
+
+    if not isinstance(graph, dict):
+        raise ValueError("Граф должен быть JSON-объектом.")
+
+    for package, dependencies in graph.items():
+
+        if not re.fullmatch(r"[A-Z]+", package):
+            raise ValueError(
+                f"Некорректное имя пакета: {package}. "
+                "Разрешены только большие латинские буквы."
+            )
+
+        if not isinstance(dependencies, list):
+            raise ValueError(
+                f"Зависимости пакета {package} должны быть списком."
+            )
+
+        for dependency in dependencies:
+
+            if not isinstance(dependency, str):
+                raise ValueError(
+                    f"Некорректная зависимость пакета {package}."
+                )
+
+            if not re.fullmatch(r"[A-Z]+", dependency):
+                raise ValueError(
+                    f"Некорректное имя зависимости: {dependency}."
+                )
+
+    # Проверяем, что все упомянутые пакеты существуют.
+    for dependencies in graph.values():
+        for dependency in dependencies:
+            if dependency not in graph:
+                raise ValueError(
+                    f"Пакет {dependency} отсутствует "
+                    "в описании тестового графа."
+                )
+
+    return graph
+
+def build_graph_bfs_recursive(
+    source: str,
+    repository_graph: dict
+) -> dict:
+    """
+    Строит граф зависимостей с помощью BFS
+    и рекурсивной обработки очереди.
+
+    visited предотвращает повторную обработку вершин
+    и бесконечный обход при циклических зависимостях.
+    """
+
+    if source not in repository_graph:
+        raise ValueError(
+            f"Пакет {source} отсутствует в репозитории."
+        )
+
+    result = {}
+    visited = set()
+
+    def bfs_recursive(queue):
+
+        if not queue:
+            return
+
+        current = queue.pop(0)
+
+        if current in visited:
+            bfs_recursive(queue)
+            return
+
+        visited.add(current)
+
+        dependencies = repository_graph[current]
+
+        result[current] = list(dependencies)
+
+        for dependency in dependencies:
+            if dependency not in visited:
+                queue.append(dependency)
+
+        bfs_recursive(queue)
+
+    bfs_recursive([source])
+
+    return result
+
+def print_dependency_graph(graph: dict):
+    """Выводит полученный граф зависимостей."""
+
+    print("\nГраф зависимостей:")
+
+    for package, dependencies in graph.items():
+
+        if dependencies:
+            print(
+                f"{package} -> {', '.join(dependencies)}"
+            )
+        else:
+            print(f"{package} -> нет зависимостей")
+
+    print("\nВсе найденные пакеты:")
+    print(", ".join(graph.keys()))
+
+    print(f"\nКоличество пакетов: {len(graph)}")
+
+
+def find_cycles(graph: dict) -> list:
+    """
+    Ищет циклические зависимости с помощью DFS.
+
+    Возвращает список обнаруженных циклов.
+    """
+
+    visited = set()
+    recursion_stack = []
+    cycles = []
+    found_cycles = set()
+
+    def dfs(node):
+
+        visited.add(node)
+        recursion_stack.append(node)
+
+        for neighbor in graph.get(node, []):
+
+            if neighbor not in visited:
+                dfs(neighbor)
+
+            elif neighbor in recursion_stack:
+
+                start = recursion_stack.index(neighbor)
+
+                cycle = (
+                    recursion_stack[start:] + [neighbor]
+                )
+
+                # Нормализуем цикл для исключения повторов.
+                body = cycle[:-1]
+                rotations = [
+                    tuple(body[i:] + body[:i])
+                    for i in range(len(body))
+                ]
+
+                normalized = min(rotations)
+
+                if normalized not in found_cycles:
+                    found_cycles.add(normalized)
+                    cycles.append(cycle)
+
+        recursion_stack.pop()
+
+    for node in graph:
+        if node not in visited:
+            dfs(node)
+
+    return cycles
+
+
+
+
+
 
 def main() -> int:
     parser = create_parser()
     args = parser.parse_args()
-
 
     print("Параметры:")
     print(f"package={args.package}")
     print(f"repository={args.repository}")
     print(f"mode={args.mode}")
     print(f"output={args.output}")
-    print()
 
     try:
-        cargo_data = load_cargo_toml(
-            args.repository,
-            args.mode
-        )
 
-        dependencies = extract_dependencies(cargo_data)
+        # ТЕСТОВЫЙ РЕЖИМ
+        if args.mode == "file":
 
-    except (FileNotFoundError, ValueError, RuntimeError) as error:
-        print(f"Ошибка: {error}", file=sys.stderr)
+            # JSON используется для тестирования графа.
+            if args.repository.lower().endswith(".json"):
+
+                repository_graph = load_test_graph(
+                    args.repository
+                )
+
+                dependency_graph = build_graph_bfs_recursive(
+                    args.package,
+                    repository_graph
+                )
+
+                print_dependency_graph(dependency_graph)
+
+                cycles = find_cycles(dependency_graph)
+
+                print("\nПроверка циклических зависимостей:")
+
+                if cycles:
+                    for cycle in cycles:
+                        print("Цикл: " + " -> ".join(cycle))
+                else:
+                    print("Циклические зависимости не обнаружены.")
+
+            else:
+                # Сохраняем возможность проверки этапа 2
+                # через локальный Cargo.toml.
+                cargo_data = load_cargo_toml(
+                    args.repository,
+                    args.mode
+                )
+
+                dependencies = extract_dependencies(cargo_data)
+
+                print(
+                    f"\nПрямые зависимости пакета "
+                    f"'{args.package}':"
+                )
+
+                for dependency in dependencies:
+                    print(f"  - {dependency}")
+
+        # РЕЖИМ URL
+        elif args.mode == "url":
+
+            cargo_data = load_cargo_toml(
+                args.repository,
+                args.mode
+            )
+
+            dependencies = extract_dependencies(cargo_data)
+
+            print(
+                f"\nПрямые зависимости пакета "
+                f"'{args.package}':"
+            )
+
+            for dependency in dependencies:
+                print(f"  - {dependency}")
+
+    except (
+        FileNotFoundError,
+        ValueError,
+        RuntimeError
+    ) as error:
+
+        print(f"\nОшибка: {error}", file=sys.stderr)
         return 1
-
-    print(f"Прямые зависимости пакета '{args.package}':")
-
-    if not dependencies:
-        print("  Зависимости отсутствуют.")
-    else:
-        for dependency in dependencies:
-            print(f"  - {dependency}")
 
     return 0
 
