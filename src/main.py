@@ -191,51 +191,45 @@ def build_raw_github_url(repository_url: str) -> str | None:
     )
 
 
-def load_cargo_toml_from_url(repository_url: str) -> dict:
-    """Загружает Cargo.toml по URL."""
-
-    url = repository_url
-
-
-
-    github_url = build_raw_github_url(repository_url)
-
-    if github_url is not None:
-        url = github_url
-
+def fetch_url_content(url: str) -> bytes:
+    """Загружает содержимое по URL."""
     request = Request(
         url,
-        headers={
-            "User-Agent": "DependencyGraphTool/1.0"
-        },
+        headers={"User-Agent": "DependencyGraphTool/1.0"},
     )
 
     try:
         with urlopen(request, timeout=10) as response:
-            content = response.read()
-
+            return response.read()
     except HTTPError as error:
         raise RuntimeError(
-            f"Не удалось получить Cargo.toml. "
-            f"HTTP ошибка: {error.code}"
+            f"Не удалось получить Cargo.toml. HTTP ошибка: {error.code}"
         ) from error
-
     except URLError as error:
         raise RuntimeError(
             f"Не удалось подключиться к репозиторию: {error.reason}"
         ) from error
-
     except TimeoutError as error:
         raise RuntimeError(
             "Истекло время ожидания ответа репозитория."
         ) from error
 
+
+def parse_cargo_toml(content: bytes) -> dict:
+    """Разбирает содержимое Cargo.toml."""
     try:
         return tomli.loads(content.decode("utf-8"))
     except tomli.TOMLDecodeError as error:
         raise ValueError(
             f"Ошибка разбора полученного Cargo.toml: {error}"
         ) from error
+
+
+def load_cargo_toml_from_url(repository_url: str) -> dict:
+    """Загружает и разбирает Cargo.toml по URL."""
+    url = build_raw_github_url(repository_url) or repository_url
+    content = fetch_url_content(url)
+    return parse_cargo_toml(content)
 
 
 def load_cargo_toml(repository: str, mode: str) -> dict:
