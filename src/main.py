@@ -9,7 +9,7 @@ import json
 import re
 import subprocess
 from pathlib import Path
-
+MIN_PARTS_COUNT = 2
 
 def validate_package_name(value: str) -> str:
     """Проверяет имя пакета."""
@@ -35,11 +35,11 @@ def validate_repository(value: str) -> str:
 
     parsed = urlparse(value)
 
-    # URL
+
     if parsed.scheme in ("http", "https") and parsed.netloc:
         return value
 
-    # Локальный путь
+
     if os.path.exists(value):
         return value
 
@@ -174,14 +174,14 @@ def build_raw_github_url(repository_url: str) -> str | None:
         if part
     ]
 
-    if len(parts) < 2:
+    if len(parts) < MIN_PARTS_COUNT:
         return None
 
     owner = parts[0]
     repository = parts[1]
 
-    # Если URL уже указывает непосредственно на Cargo.toml,
-    # преобразование не требуется.
+
+
     if repository_url.endswith("Cargo.toml"):
         return repository_url
 
@@ -196,8 +196,8 @@ def load_cargo_toml_from_url(repository_url: str) -> dict:
 
     url = repository_url
 
-    # Если пользователь передал GitHub-репозиторий,
-    # пытаемся получить Cargo.toml из ветки main.
+
+
     github_url = build_raw_github_url(repository_url)
 
     if github_url is not None:
@@ -342,7 +342,7 @@ def load_test_graph(file_path: str) -> dict:
                     f"Некорректное имя зависимости: {dependency}."
                 )
 
-    # Проверяем, что все упомянутые пакеты существуют.
+
     for dependencies in graph.values():
         for dependency in dependencies:
             if dependency not in graph:
@@ -450,7 +450,7 @@ def find_cycles(graph: dict) -> list:
                     recursion_stack[start:] + [neighbor]
                 )
 
-                # Нормализуем цикл для исключения повторов.
+
                 body = cycle[:-1]
                 rotations = [
                     tuple(body[i:] + body[:i])
@@ -474,13 +474,6 @@ def find_cycles(graph: dict) -> list:
 def build_reverse_graph(graph):
     """
     Строит граф обратных зависимостей.
-
-    Если:
-        A -> B
-        C -> B
-
-    то:
-        B -> [A, C]
     """
     reverse_graph = {package: [] for package in graph}
 
@@ -575,7 +568,7 @@ def build_graphviz_dot(graph, package):
         ""
     ]
 
-    # Добавляем все вершины и связи.
+
     added_nodes = set()
 
     for source, dependencies in graph.items():
@@ -699,10 +692,10 @@ def main() -> int:
 
     try:
 
-        # ТЕСТОВЫЙ РЕЖИМ
+
         if args.mode == "file":
 
-            # JSON используется для тестирования графа.
+
             if args.repository.lower().endswith(".json"):
 
                 repository_graph = load_test_graph(
@@ -735,8 +728,8 @@ def main() -> int:
                 )
 
             else:
-                # Сохраняем возможность проверки этапа 2
-                # через локальный Cargo.toml.
+
+
                 cargo_data = load_cargo_toml(
                     args.repository,
                     args.mode
@@ -752,7 +745,7 @@ def main() -> int:
                 for dependency in dependencies:
                     print(f"  - {dependency}")
 
-        # РЕЖИМ URL
+
         elif args.mode == "url":
 
             cargo_data = load_cargo_toml(
